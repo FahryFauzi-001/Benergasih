@@ -27,7 +27,10 @@ export const MOCK_RESULTS = {
   "yellow-empty": { status: "yellow", variant: "empty", sources: [] },
   "yellow-related": {
     status: "yellow", variant: "related",
-    sources: [src("Artikel terkait — Detik Health", "20 Okt 2025"), src("Artikel terkait — CNN Indonesia", "3 Sep 2025")],
+    sources: [
+      { publisher: "Detik Health — Manfaat dan Batas Aman Vitamin D", date: "health.detik.com", snippet: "Para dokter menyebut vitamin D membantu daya tahan tubuh, tetapi tidak mencegah semua jenis infeksi virus.", url: "#" },
+      { publisher: "CNN Indonesia — Memahami Peran Vitamin D bagi Imunitas", date: "cnnindonesia.com", snippet: "Konsumsi dosis tinggi tanpa pengawasan medis justru berisiko menimbulkan efek samping.", url: "#" },
+    ],
   },
   "yellow-unknown": {
     status: "yellow", variant: "unknown", rawRating: "Needs more context",

@@ -1,5 +1,5 @@
 import { EXAMPLES, MOCK_RESULTS, STATE_PREVIEWS, LOADING_TEXTS } from "./mock-data.js";
-import { STATUS, YELLOW_NOTES, ERRORS, VALIDATION } from "./ui-text.js";
+import { STATUS, YELLOW_LABELS, YELLOW_NOTES, ERRORS, VALIDATION } from "./ui-text.js";
 
 const MIN = 15, MAX = 500, MAX_SCANS = 10;
 const $ = (id) => document.getElementById(id);
@@ -68,13 +68,18 @@ function showResult(r) {
   const s = STATUS[r.status];
   el.result.className = `result ${r.status}`;
   el.icon.textContent = s.icon;
-  el.banner.textContent = s.label;
+  el.banner.textContent = r.status === "yellow" ? (YELLOW_LABELS[r.variant] || s.label) : s.label;
   el.note.textContent = r.status === "yellow" ? YELLOW_NOTES[r.variant](r) : s.note(r);
   el.sources.replaceChildren(...r.sources.map((x) => {
     const li = document.createElement("li");
-    li.innerHTML = `<div><div class="src-name"></div><div class="src-meta"></div></div><a class="src-link" target="_blank" rel="noopener">Baca artikel asli →</a>`;
+    li.innerHTML = `<div class="src-info"><div class="src-name"></div><div class="src-meta"></div><p class="src-snippet" hidden></p></div><a class="src-link" target="_blank" rel="noopener">Baca artikel asli →</a>`;
     li.querySelector(".src-name").textContent = x.publisher;
     li.querySelector(".src-meta").textContent = x.date;
+    if (x.snippet) {
+      const sn = li.querySelector(".src-snippet");
+      sn.textContent = x.snippet;
+      sn.hidden = false;
+    }
     li.querySelector("a").href = x.url;
     return li;
   }));

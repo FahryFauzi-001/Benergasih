@@ -148,9 +148,9 @@ def query_google(claim, api_key):
 def query_tavily(claim, api_key):
     payload = json.dumps({
         "api_key": api_key,
-        "query": f"cek fakta {claim}",
+        "query": claim,
         "search_depth": "basic",
-        "max_results": 3,
+        "max_results": 4,
     }).encode("utf-8")
     req = Request("https://api.tavily.com/search", data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
@@ -162,11 +162,14 @@ def query_tavily(claim, api_key):
     if not items:
         return None
     sources = []
-    for item in items[:3]:
+    for item in items[:4]:
         host = urlparse(item.get("url", "")).netloc.removeprefix("www.") or "Artikel terkait"
+        raw_sn = " ".join(str(item.get("content") or "").split())
+        snippet = f"{raw_sn[:177]}..." if len(raw_sn) > 180 else raw_sn
         sources.append({
-            "publisher": f"Artikel terkait — {item.get('title') or host}",
+            "publisher": item.get("title") or host,
             "date": host,
+            "snippet": snippet,
             "url": item.get("url") or "#",
         })
     return {"status": "yellow", "variant": "related", "sources": sources, "provider": "tavily"}

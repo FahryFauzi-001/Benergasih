@@ -168,9 +168,9 @@ async function queryTavily(claim, apiKey) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       api_key: apiKey,
-      query: `cek fakta ${claim}`,
+      query: claim,
       search_depth: "basic",
-      max_results: 3,
+      max_results: 4,
     }),
     signal: AbortSignal.timeout(8000),
   });
@@ -179,18 +179,21 @@ async function queryTavily(claim, apiKey) {
   const items = Array.isArray(data.results) ? data.results : [];
   if (!items.length) return null;
 
-  // Hasil Tavily SELALU kuning varian "related" (bukan putusan).
+  // Hasil Tavily SELALU kuning varian "related" (liputan terkait, bukan putusan).
   return {
     status: "yellow",
     variant: "related",
-    sources: items.slice(0, 3).map((item) => {
+    sources: items.slice(0, 4).map((item) => {
       let host = "Artikel terkait";
       try {
         host = new URL(item.url).hostname.replace(/^www\./, "");
       } catch {}
+      const rawSnippet = String(item.content || "").replace(/\s+/g, " ").trim();
+      const snippet = rawSnippet.length > 180 ? `${rawSnippet.slice(0, 177)}...` : rawSnippet;
       return {
-        publisher: `Artikel terkait — ${item.title || host}`,
+        publisher: item.title || host,
         date: host,
+        snippet,
         url: item.url || "#",
       };
     }),

@@ -146,9 +146,11 @@ blockquote { margin: 0 0 16px; padding: 8px 14px; border-left: 3px solid var(--b
   display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
   background: #060814; border: 1px solid rgba(139, 92, 246, .3); border-radius: 6px; padding: 10px 14px;
 }
+.src-info { flex: 1 1 260px; min-width: 0; }
 .src-name { font-weight: 700; }
 .src-meta { font-size: .8rem; color: var(--muted); }
-.src-link { color: var(--brand); font-size: .85rem; }
+.src-snippet { margin: 6px 0 0; font-size: .8rem; color: var(--text); opacity: .82; line-height: 1.5; }
+.src-link { color: var(--brand); font-size: .85rem; white-space: nowrap; }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .actions .btn { flex: 1 1 140px; width: auto; }
 .toast { min-height: 1.2em; margin: 10px 0 0; font-size: .8rem; color: var(--muted); }
