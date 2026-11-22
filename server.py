@@ -203,7 +203,7 @@ def analyze_with_gemini(claim, sources, api_key):
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1},
     }).encode("utf-8")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={api_key}"
     req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urlopen(req, timeout=10) as resp:
