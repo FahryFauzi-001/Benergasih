@@ -16,15 +16,17 @@ let scans = 0;
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /* ---------- input ---------- */
+const isUrl = (t) => /^https?:\/\/\S+$/i.test(t.trim());
 function trimToCore(text) {
-  if (text.length <= MAX) return text;
+  if (isUrl(text) || text.length <= MAX) return text;
   const cut = text.slice(0, MAX);
   const end = Math.max(cut.lastIndexOf("."), cut.lastIndexOf("!"), cut.lastIndexOf("?"));
   return end > 80 ? cut.slice(0, end + 1) : cut;
 }
 function validate(text) {
-  if (!text.trim()) return VALIDATION.empty;
-  if (text.trim().length < MIN) return VALIDATION.short;
+  const t = text.trim();
+  if (!t) return VALIDATION.empty;
+  if (!isUrl(t) && t.length < MIN) return VALIDATION.short;
   return null;
 }
 el.claim.addEventListener("input", () => {
@@ -111,7 +113,7 @@ async function scan() {
     }
     scans++;
     el.loading.hidden = true;
-    el.rclaim.textContent = claim;
+    el.rclaim.textContent = data.scannedClaim || claim;
     showResult(data);
   } catch {
     el.loading.hidden = true;

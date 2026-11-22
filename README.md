@@ -21,7 +21,7 @@ Error teknis dan kuota habis ditampilkan secara netral tanpa warna putusan.
 ## Cara Kerja
 
 ```
-Klaim pengguna → Cache in-memory → Google Fact Check API → Tavily Search API (jika kosong)
+Klaim / link berita → (ekstrak judul jika link) → Cache in-memory → Google Fact Check API → Tavily Search API (jika kosong)
 ```
 
 1. **Google Fact Check Tools API** mencari putusan dari publisher cek fakta, lalu rating teks bebas dipetakan ke status (urutan pencocokan: *negasi/sebagian → salah → benar*).

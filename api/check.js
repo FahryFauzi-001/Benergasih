@@ -17,6 +17,64 @@ function trimToCore(text) {
   return end > 80 ? cut.slice(0, end + 1) : cut;
 }
 
+const URL_RE = /^https?:\/\/\S+$/i;
+const PRIVATE_HOST_RE = /^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.0\.0\.0|::1|172\.(1[6-9]|2\d|3[01])\.|.*\.local$)/i;
+
+function decodeHtml(s) {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function slugToText(urlObj) {
+  const parts = urlObj.pathname.split("/").filter(Boolean);
+  const best = parts.sort((a, b) => b.length - a.length)[0] || "";
+  return decodeURIComponent(best)
+    .replace(/\.(html?|php|aspx?)$/i, "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\d{4,}\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function extractClaimFromUrl(rawUrl) {
+  let u;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(u.protocol) || PRIVATE_HOST_RE.test(u.hostname)) return null;
+
+  try {
+    const res = await fetch(u.href, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; BenerGasihBot/1.0)" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      const html = (await res.text()).slice(0, 120_000);
+      const og =
+        html.match(/<meta[^>]+(?:property|name)=["'](?:og:title|twitter:title)["'][^>]+content=["']([^"']+)["']/i) ||
+        html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:og:title|twitter:title)["']/i) ||
+        html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+      if (og?.[1]) {
+        const title = decodeHtml(og[1]).replace(/\s+[-|–—]\s+[^-|–—]{2,40}$/, "").trim();
+        if (title.length >= 10) return trimToCore(title);
+      }
+    }
+  } catch {}
+
+  const slug = slugToText(u);
+  return slug.length >= 10 ? trimToCore(slug) : null;
+}
+
 function normalizeKey(text) {
   return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
@@ -171,19 +229,28 @@ export default async function handler(req, res) {
     }
   }
 
-  const rawClaim = typeof body?.claim === "string" ? body.claim.trim() : "";
-  if (rawClaim.length < MIN_LEN) {
+  const rawInput = typeof body?.claim === "string" ? body.claim.trim() : "";
+  const isLink = URL_RE.test(rawInput);
+  if (!isLink && rawInput.length < MIN_LEN) {
     res.status(400).json({ error: "claim_too_short", message: "Klaim terlalu pendek (minimal 15 karakter)." });
     return;
   }
 
-  const claim = trimToCore(rawClaim);
+  let claim = isLink ? await extractClaimFromUrl(rawInput) : trimToCore(rawInput);
+  if (!claim) {
+    res.status(400).json({
+      error: "unreadable_link",
+      message: "Judul dari link tidak bisa dibaca. Coba salin teks judul atau klaimnya langsung ya.",
+    });
+    return;
+  }
+
   const key = normalizeKey(claim);
 
   // 1. Cek cache dulu
   const cached = getCache(key);
   if (cached) {
-    res.status(200).json({ ...cached, cached: true });
+    res.status(200).json({ ...cached, scannedClaim: claim, cached: true });
     return;
   }
 
@@ -216,7 +283,7 @@ export default async function handler(req, res) {
     }
 
     setCache(key, result);
-    res.status(200).json({ ...result, cached: false });
+    res.status(200).json({ ...result, scannedClaim: claim, cached: false });
   } catch (err) {
     const code = err?.code || 502;
     res.status(code).json({

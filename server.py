@@ -2,12 +2,14 @@
 Membaca API key dari file .env di folder proyek. Jalankan: python server.py
 """
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode, urlparse, unquote
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from datetime import datetime
+import html
 import json
 import os
+import re
 import time
 
 PORT = int(os.environ.get("PORT", "3000"))
@@ -67,6 +69,41 @@ def trim_to_core(text):
     cut = text[:MAX_LEN]
     end = max(cut.rfind("."), cut.rfind("!"), cut.rfind("?"))
     return cut[: end + 1] if end > 80 else cut
+
+
+URL_RE = re.compile(r"^https?://\S+$", re.I)
+PRIVATE_HOST_RE = re.compile(
+    r"^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.0\.0\.0|::1|172\.(1[6-9]|2\d|3[01])\.|.*\.local$)", re.I
+)
+
+
+def extract_claim_from_url(raw_url):
+    u = urlparse(raw_url)
+    if u.scheme not in ("http", "https") or not u.hostname or PRIVATE_HOST_RE.match(u.hostname):
+        return None
+    try:
+        req = Request(raw_url, headers={"User-Agent": "Mozilla/5.0 (compatible; BenerGasihBot/1.0)"})
+        with urlopen(req, timeout=5) as resp:
+            chunk = resp.read(120_000).decode("utf-8", errors="ignore")
+        patterns = [
+            r'<meta[^>]+(?:property|name)=["\'](?:og:title|twitter:title)["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:title|twitter:title)["\']',
+            r"<title[^>]*>([\s\S]*?)</title>",
+        ]
+        for pat in patterns:
+            m = re.search(pat, chunk, re.I)
+            if m:
+                title = html.unescape(re.sub(r"\s+", " ", m.group(1))).strip()
+                title = re.sub(r"\s+[-|–—]\s+[^-|–—]{2,40}$", "", title).strip()
+                if len(title) >= 10:
+                    return trim_to_core(title)
+    except Exception:
+        pass
+    parts = [p for p in u.path.split("/") if p]
+    best = max(parts, key=len, default="")
+    slug = re.sub(r"\.(html?|php|aspx?)$", "", unquote(best), flags=re.I)
+    slug = re.sub(r"\s+", " ", re.sub(r"\b\d{4,}\b", "", re.sub(r"[-_]+", " ", slug))).strip()
+    return trim_to_core(slug) if len(slug) >= 10 else None
 
 
 def format_date(iso):
@@ -154,15 +191,22 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json(400, {"error": "invalid_json", "message": "Format permintaan tidak valid."})
 
         raw = body.get("claim", "").strip() if isinstance(body.get("claim"), str) else ""
-        if len(raw) < MIN_LEN:
+        is_link = bool(URL_RE.match(raw))
+        if not is_link and len(raw) < MIN_LEN:
             return self.send_json(400, {"error": "claim_too_short", "message": "Klaim terlalu pendek (minimal 15 karakter)."})
 
-        claim = trim_to_core(raw)
+        claim = extract_claim_from_url(raw) if is_link else trim_to_core(raw)
+        if not claim:
+            return self.send_json(400, {
+                "error": "unreadable_link",
+                "message": "Judul dari link tidak bisa dibaca. Coba salin teks judul atau klaimnya langsung ya.",
+            })
+
         key = " ".join(claim.lower().split())
         now = time.time()
         hit = CACHE.get(key)
         if hit and now < hit[1]:
-            return self.send_json(200, {**hit[0], "cached": True})
+            return self.send_json(200, {**hit[0], "scannedClaim": claim, "cached": True})
 
         gkey = os.environ.get("GOOGLE_FACTCHECK_KEY", "").strip()
         tkey = os.environ.get("TAVILY_KEY", "").strip()
@@ -181,7 +225,7 @@ class Handler(SimpleHTTPRequestHandler):
             if len(CACHE) >= CACHE_MAX:
                 CACHE.pop(next(iter(CACHE)))
             CACHE[key] = (result, now + CACHE_TTL)
-            return self.send_json(200, {**result, "cached": False})
+            return self.send_json(200, {**result, "scannedClaim": claim, "cached": False})
         except HTTPError as e:
             code = 429 if e.code == 429 else 502
             msg = "Kuota Google Fact Check API sedang habis. Coba lagi nanti." if code == 429 else "Gagal menghubungi layanan cek fakta."
