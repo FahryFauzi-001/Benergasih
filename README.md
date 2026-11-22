@@ -2,6 +2,8 @@
 
 > **Bener gasih? Scan dulu, baru share.**
 
+🔗 **Live Demo:** https://benergasih.vercel.app/
+
 Terminal web bergaya cyberpunk untuk mengecek kabar mencurigakan lewat basis data cek fakta.
 
 > **Disclaimer:** Aplikasi ini **bukan hakim**, hanya pembawa putusan dari publisher cek fakta. Putusan akhir tetap berada di sumber aslinya.
