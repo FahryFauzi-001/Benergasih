@@ -201,6 +201,61 @@ async function queryTavily(claim, apiKey) {
   };
 }
 
+async function analyzeWithGemini(claim, sources, apiKey) {
+  const evidence = sources.length
+    ? sources.map((s, i) => `${i + 1}. [${s.date}] ${s.publisher}: ${s.snippet || "(tanpa cuplikan)"}`).join("\n")
+    : "(Tidak ada hasil pencarian yang relevan)";
+
+  const prompt = [
+    "Kamu adalah asisten verifikasi fakta yang objektif dan ringkas (bahasa Indonesia).",
+    "Tugasmu menilai klaim berdasarkan bukti pencarian dan fakta umum yang mapan.",
+    "Aturan status:",
+    '- "red": jika klaim jelas salah, hoaks, mustahil, atau bertentangan langsung dengan fakta/bukti.',
+    '- "blue": jika bukti lintas media kredibel jelas mengonfirmasi inti klaim tersebut benar terjadi.',
+    '- "yellow": jika bukti belum cukup, klaim menyesatkan/hilang konteks, atau masih berupa rumor.',
+    "Balas HANYA JSON valid dengan format:",
+    '{"status":"red|yellow|blue","variant":"misleading|related|empty","summary":"Penjelasan objektif 2-3 kalimat. Jika relevan, bedakan fakta inti dan konteks penting."}',
+    "",
+    `Klaim: ${claim}`,
+    "Bukti pencarian:",
+    evidence,
+  ].join("\n");
+
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0.1 },
+        }),
+        signal: AbortSignal.timeout(10000),
+      }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const parsed = JSON.parse(text);
+    if (!["red", "yellow", "blue"].includes(parsed.status) || !parsed.summary) return null;
+    const out = {
+      status: parsed.status,
+      summary: String(parsed.summary).trim(),
+      sources,
+      provider: "gemini+tavily",
+    };
+    if (out.status === "yellow") {
+      out.variant = ["misleading", "related", "empty"].includes(parsed.variant)
+        ? parsed.variant
+        : (sources.length ? "related" : "empty");
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
 
@@ -259,17 +314,18 @@ export default async function handler(req, res) {
 
   const googleKey = process.env.GOOGLE_FACTCHECK_KEY;
   const tavilyKey = process.env.TAVILY_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY;
 
-  if (!googleKey && !tavilyKey) {
+  if (!googleKey && !tavilyKey && !geminiKey) {
     res.status(503).json({
       error: "missing_api_key",
-      message: "Server belum memiliki API key. Atur GOOGLE_FACTCHECK_KEY / TAVILY_KEY di environment variable.",
+      message: "Server belum memiliki API key. Atur GOOGLE_FACTCHECK_KEY / TAVILY_KEY / GEMINI_API_KEY di environment variable.",
     });
     return;
   }
 
   try {
-    // 2. Google Fact Check API
+    // 2. Google Fact Check API (putusan publisher resmi)
     let result = null;
     if (googleKey) {
       result = await queryGoogleFactCheck(claim, googleKey);
@@ -280,7 +336,13 @@ export default async function handler(req, res) {
       result = await queryTavily(claim, tavilyKey);
     }
 
-    // 4. Kalau keduanya kosong -> kuning varian "empty"
+    // 4. Analisis AI berbasis bukti (Gemini) jika belum ada putusan publisher resmi
+    if ((!result || result.provider === "tavily") && geminiKey) {
+      const aiResult = await analyzeWithGemini(claim, result?.sources || [], geminiKey);
+      if (aiResult) result = aiResult;
+    }
+
+    // 5. Kalau semuanya kosong -> kuning varian "empty"
     if (!result) {
       result = { status: "yellow", variant: "empty", sources: [], provider: "none" };
     }

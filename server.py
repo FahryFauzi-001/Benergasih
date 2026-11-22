@@ -175,6 +175,57 @@ def query_tavily(claim, api_key):
     return {"status": "yellow", "variant": "related", "sources": sources, "provider": "tavily"}
 
 
+def analyze_with_gemini(claim, sources, api_key):
+    if sources:
+        evidence = "\n".join(
+            f"{i + 1}. [{s['date']}] {s['publisher']}: {s.get('snippet') or '(tanpa cuplikan)'}"
+            for i, s in enumerate(sources)
+        )
+    else:
+        evidence = "(Tidak ada hasil pencarian yang relevan)"
+
+    prompt = "\n".join([
+        "Kamu adalah asisten verifikasi fakta yang objektif dan ringkas (bahasa Indonesia).",
+        "Tugasmu menilai klaim berdasarkan bukti pencarian dan fakta umum yang mapan.",
+        "Aturan status:",
+        '- "red": jika klaim jelas salah, hoaks, mustahil, atau bertentangan langsung dengan fakta/bukti.',
+        '- "blue": jika bukti lintas media kredibel jelas mengonfirmasi inti klaim tersebut benar terjadi.',
+        '- "yellow": jika bukti belum cukup, klaim menyesatkan/hilang konteks, atau masih berupa rumor.',
+        "Balas HANYA JSON valid dengan format:",
+        '{"status":"red|yellow|blue","variant":"misleading|related|empty","summary":"Penjelasan objektif 2-3 kalimat. Jika relevan, bedakan fakta inti dan konteks penting."}',
+        "",
+        f"Klaim: {claim}",
+        "Bukti pencarian:",
+        evidence,
+    ])
+
+    payload = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1},
+    }).encode("utf-8")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        parsed = json.loads(text)
+        if parsed.get("status") not in ("red", "yellow", "blue") or not parsed.get("summary"):
+            return None
+        out = {
+            "status": parsed["status"],
+            "summary": str(parsed["summary"]).strip(),
+            "sources": sources,
+            "provider": "gemini+tavily",
+        }
+        if out["status"] == "yellow":
+            v = parsed.get("variant")
+            out["variant"] = v if v in ("misleading", "related", "empty") else ("related" if sources else "empty")
+        return out
+    except Exception:
+        return None
+
+
 class Handler(SimpleHTTPRequestHandler):
     def send_json(self, code, data):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -213,16 +264,21 @@ class Handler(SimpleHTTPRequestHandler):
 
         gkey = os.environ.get("GOOGLE_FACTCHECK_KEY", "").strip()
         tkey = os.environ.get("TAVILY_KEY", "").strip()
-        if not gkey and not tkey:
+        mkey = os.environ.get("GEMINI_API_KEY", "").strip()
+        if not gkey and not tkey and not mkey:
             return self.send_json(503, {
                 "error": "missing_api_key",
-                "message": "Server belum memiliki API key. Buat file .env dan isi GOOGLE_FACTCHECK_KEY / TAVILY_KEY.",
+                "message": "Server belum memiliki API key. Buat file .env dan isi GOOGLE_FACTCHECK_KEY / TAVILY_KEY / GEMINI_API_KEY.",
             })
 
         try:
             result = query_google(claim, gkey) if gkey else None
             if not result and tkey:
                 result = query_tavily(claim, tkey)
+            if (not result or result.get("provider") == "tavily") and mkey:
+                ai_res = analyze_with_gemini(claim, (result or {}).get("sources", []), mkey)
+                if ai_res:
+                    result = ai_res
             if not result:
                 result = {"status": "yellow", "variant": "empty", "sources": [], "provider": "none"}
             if len(CACHE) >= CACHE_MAX:

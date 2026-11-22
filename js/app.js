@@ -69,7 +69,9 @@ function showResult(r) {
   el.result.className = `result ${r.status}`;
   el.icon.textContent = s.icon;
   el.banner.textContent = r.status === "yellow" ? (YELLOW_LABELS[r.variant] || s.label) : s.label;
-  el.note.textContent = r.status === "yellow" ? YELLOW_NOTES[r.variant](r) : s.note(r);
+  el.note.textContent = r.summary
+    ? `Analisis AI berbasis sumber pencarian: ${r.summary}`
+    : (r.status === "yellow" ? YELLOW_NOTES[r.variant](r) : s.note(r));
   el.sources.replaceChildren(...r.sources.map((x) => {
     const li = document.createElement("li");
     li.innerHTML = `<div class="src-info"><div class="src-name"></div><div class="src-meta"></div><p class="src-snippet" hidden></p></div><a class="src-link" target="_blank" rel="noopener">Baca artikel asli →</a>`;
