@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BenerGasih — Scan dulu, baru share</title>
+  <meta name="description" content="Terminal kecil untuk menginterogasi kabar mencurigakan. Pembawa putusan dari sumber cek fakta, bukan hakim." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <header class="header">
+    <h1 class="logo" id="logo" data-text="BenerGasih">BenerGasih</h1>
+    <p class="tagline">Bener gasih? Scan dulu, baru share.</p>
+  </header>
+
+  <main class="main">
+    <!-- PANEL INPUT -->
+    <section class="panel" aria-labelledby="input-title">
+      <div class="panel-bar">
+        <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span id="input-title">terminal://scan-klaim</span>
+      </div>
+      <div class="panel-body">
+        <label for="claim" class="prompt-label">&gt; tempel klaim yang mencurigakan:</label>
+        <textarea id="claim" rows="5" placeholder="contoh: Minum air lemon hangat setiap pagi menyembuhkan kanker..." spellcheck="false"></textarea>
+        <div class="input-meta">
+          <span id="hint" class="hint" role="status" aria-live="polite"></span>
+          <span id="counter" class="counter">0 / 500</span>
+        </div>
+        <button id="scan-btn" class="btn btn-primary" type="button">SCAN SEKARANG</button>
+      </div>
+    </section>
+
+    <!-- CONTOH KLAIM -->
+    <section class="examples" aria-labelledby="ex-title">
+      <h2 id="ex-title" class="section-title">// coba contoh klaim</h2>
+      <div class="chips" id="examples"></div>
+    </section>
+
+    <!-- LOADING -->
+    <section id="loading" class="loading" hidden aria-live="polite">
+      <div class="radar" aria-hidden="true"></div>
+      <p id="loading-text">menyusup ke database cek fakta...</p>
+    </section>
+
+    <!-- ERROR -->
+    <section id="error" class="error-box" hidden role="alert">
+      <h2>Ada gangguan teknis</h2>
+      <p id="error-msg">Pemindaian belum bisa dilakukan. Ini bukan hasil cek fakta.</p>
+      <button id="retry-btn" class="btn btn-ghost" type="button">COBA LAGI</button>
+    </section>
+
+    <!-- HASIL -->
+    <section id="result" class="result" hidden tabindex="-1" aria-live="polite">
+      <div id="banner" class="banner">
+        <span id="banner-icon" class="banner-icon" aria-hidden="true"></span>
+        <div>
+          <p class="banner-kicker">STATUS</p>
+          <h2 id="banner-label" class="banner-label"></h2>
+        </div>
+      </div>
+      <div class="result-body">
+        <p class="result-claim-title">Klaim yang dipindai</p>
+        <blockquote id="result-claim"></blockquote>
+        <p id="result-note" class="result-note"></p>
+        <h3 class="section-title">// sumber</h3>
+        <ul id="sources" class="sources"></ul>
+        <div class="actions">
+          <button id="share-btn" class="btn btn-primary" type="button">BAGIKAN</button>
+          <button id="reset-btn" class="btn btn-ghost" type="button">CEK LAGI</button>
+        </div>
+        <p id="toast" class="toast" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <!-- PREVIEW SEMUA STATE (untuk demo portofolio) -->
+    <details class="demo-states">
+      <summary>Pratinjau semua state (mode demo)</summary>
+      <div class="chips" id="state-preview"></div>
+    </details>
+  </main>
+
+  <footer class="footer">
+    <p>Kami pembawa kabar dari sumber cek fakta, <strong>bukan hakim</strong>. Putusan akhir tetap ada di publisher aslinya.</p>
+    <p><a href="https://github.com/FahryFauzi-001/Benergasih" target="_blank" rel="noopener">GitHub repo</a> · dibuat untuk portofolio</p>
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

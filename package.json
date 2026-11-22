@@ -1,0 +1,7 @@
+{
+  "name": "benergasih",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Terminal kecil untuk menginterogasi kabar mencurigakan."
+}
