@@ -2,7 +2,7 @@
 Membaca API key dari file .env di folder proyek. Jalankan: python server.py
 """
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlencode, urlparse, unquote
+from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl, unquote
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from datetime import datetime
@@ -145,12 +145,29 @@ def query_google(claim, api_key):
     return res
 
 
+EXCLUDED_DOMAINS = [
+    "linkedin.com", "facebook.com", "instagram.com",
+    "tiktok.com", "twitter.com", "x.com", "pinterest.com",
+]
+
+
+def clean_url(raw_url):
+    try:
+        u = urlparse(raw_url)
+        q = [(k, v) for k, v in parse_qsl(u.query, keep_blank_values=True)
+             if not re.match(r"^(utm_|msockid|fbclid|gclid|ref|source)", k, re.I)]
+        return urlunparse((u.scheme, u.netloc, u.path, u.params, urlencode(q), ""))
+    except Exception:
+        return raw_url or "#"
+
+
 def query_tavily(claim, api_key):
     payload = json.dumps({
         "api_key": api_key,
         "query": claim,
         "search_depth": "basic",
-        "max_results": 4,
+        "max_results": 6,
+        "exclude_domains": EXCLUDED_DOMAINS,
     }).encode("utf-8")
     req = Request("https://api.tavily.com/search", data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
@@ -159,19 +176,28 @@ def query_tavily(claim, api_key):
     except (HTTPError, URLError, TimeoutError):
         return None
     items = data.get("results", [])
-    if not items:
-        return None
-    sources = []
-    for item in items[:4]:
-        host = urlparse(item.get("url", "")).netloc.removeprefix("www.") or "Artikel terkait"
+    seen, sources = set(), []
+    for item in items:
+        score = item.get("score")
+        if isinstance(score, (int, float)) and score < 0.45:
+            continue
+        url = clean_url(item.get("url") or "#")
+        if url != "#" and url in seen:
+            continue
+        seen.add(url)
+        host = urlparse(url).netloc.removeprefix("www.") or "Artikel terkait"
         raw_sn = " ".join(str(item.get("content") or "").split())
         snippet = f"{raw_sn[:177]}..." if len(raw_sn) > 180 else raw_sn
         sources.append({
             "publisher": item.get("title") or host,
             "date": host,
             "snippet": snippet,
-            "url": item.get("url") or "#",
+            "url": url,
         })
+        if len(sources) >= 4:
+            break
+    if not sources:
+        return None
     return {"status": "yellow", "variant": "related", "sources": sources, "provider": "tavily"}
 
 
@@ -186,13 +212,14 @@ def analyze_with_gemini(claim, sources, api_key):
 
     prompt = "\n".join([
         "Kamu adalah asisten verifikasi fakta yang objektif dan ringkas (bahasa Indonesia).",
-        "Tugasmu menilai klaim berdasarkan bukti pencarian dan fakta umum yang mapan.",
+        "Tugasmu menilai klaim berdasarkan bukti pencarian dan fakta umum/ilmiah yang mapan.",
         "Aturan status:",
-        '- "red": jika klaim jelas salah, hoaks, mustahil, atau bertentangan langsung dengan fakta/bukti.',
-        '- "blue": jika bukti lintas media kredibel jelas mengonfirmasi inti klaim tersebut benar terjadi.',
-        '- "yellow": jika bukti belum cukup, klaim menyesatkan/hilang konteks, atau masih berupa rumor.',
+        '- "red": jika klaim jelas salah, hoaks, mustahil secara realita/ilmiah (misal manusia ke Mars saat ini, atau jabatan negara yang jelas keliru), atau bertentangan langsung dengan fakta/bukti.',
+        '- "blue": jika fakta mapan atau bukti lintas media kredibel jelas mengonfirmasi inti klaim tersebut benar.',
+        '- "yellow": HANYA jika klaim masih mungkin terjadi tapi bukti belum cukup, atau benar sebagian/menyesatkan/hilang konteks.',
+        '- "sourcesRelevant": true jika bukti pencarian di bawah benar-benar membahas topik klaim, false jika hasil pencarian melenceng/tidak nyambung.',
         "Balas HANYA JSON valid dengan format:",
-        '{"status":"red|yellow|blue","variant":"misleading|related|empty","summary":"Penjelasan objektif 2-3 kalimat. Jika relevan, bedakan fakta inti dan konteks penting."}',
+        '{"status":"red|yellow|blue","variant":"misleading|related|empty","sourcesRelevant":true,"summary":"Penjelasan objektif 2-3 kalimat. Jika relevan, bedakan fakta inti dan konteks penting."}',
         "",
         f"Klaim: {claim}",
         "Bukti pencarian:",
@@ -211,19 +238,22 @@ def analyze_with_gemini(claim, sources, api_key):
         text = data["candidates"][0]["content"]["parts"][0]["text"]
         parsed = json.loads(text)
         if parsed.get("status") not in ("red", "yellow", "blue") or not parsed.get("summary"):
-            return None
+            return {"_aiError": "invalid_json"}
+        final_sources = [] if parsed.get("sourcesRelevant") is False else sources
         out = {
             "status": parsed["status"],
             "summary": str(parsed["summary"]).strip(),
-            "sources": sources,
+            "sources": final_sources,
             "provider": "gemini+tavily",
         }
         if out["status"] == "yellow":
             v = parsed.get("variant")
-            out["variant"] = v if v in ("misleading", "related", "empty") else ("related" if sources else "empty")
+            out["variant"] = v if v in ("misleading", "related", "empty") else ("related" if final_sources else "empty")
         return out
+    except HTTPError as e:
+        return {"_aiError": f"http_{e.code}"}
     except Exception:
-        return None
+        return {"_aiError": "timeout_or_network"}
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -275,16 +305,19 @@ class Handler(SimpleHTTPRequestHandler):
             result = query_google(claim, gkey) if gkey else None
             if not result and tkey:
                 result = query_tavily(claim, tkey)
+            ai_status = "ok" if mkey else "missing_key"
             if (not result or result.get("provider") == "tavily") and mkey:
                 ai_res = analyze_with_gemini(claim, (result or {}).get("sources", []), mkey)
-                if ai_res:
+                if ai_res and "_aiError" not in ai_res:
                     result = ai_res
+                else:
+                    ai_status = (ai_res or {}).get("_aiError", "error")
             if not result:
                 result = {"status": "yellow", "variant": "empty", "sources": [], "provider": "none"}
             if len(CACHE) >= CACHE_MAX:
                 CACHE.pop(next(iter(CACHE)))
             CACHE[key] = (result, now + CACHE_TTL)
-            return self.send_json(200, {**result, "scannedClaim": claim, "cached": False})
+            return self.send_json(200, {**result, "aiStatus": ai_status, "scannedClaim": claim, "cached": False})
         except HTTPError as e:
             code = 429 if e.code == 429 else 502
             msg = "Kuota Google Fact Check API sedang habis. Coba lagi nanti." if code == 429 else "Gagal menghubungi layanan cek fakta."

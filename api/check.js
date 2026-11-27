@@ -162,6 +162,24 @@ async function queryGoogleFactCheck(claim, apiKey) {
   return result;
 }
 
+const EXCLUDED_DOMAINS = [
+  "linkedin.com", "facebook.com", "instagram.com",
+  "tiktok.com", "twitter.com", "x.com", "pinterest.com",
+];
+
+function cleanUrl(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    for (const k of [...u.searchParams.keys()]) {
+      if (/^(utm_|msockid|fbclid|gclid|ref|source)/i.test(k)) u.searchParams.delete(k);
+    }
+    u.hash = "";
+    return u.href;
+  } catch {
+    return rawUrl || "#";
+  }
+}
+
 async function queryTavily(claim, apiKey) {
   const res = await fetch("https://api.tavily.com/search", {
     method: "POST",
@@ -170,33 +188,45 @@ async function queryTavily(claim, apiKey) {
       api_key: apiKey,
       query: claim,
       search_depth: "basic",
-      max_results: 4,
+      max_results: 6,
+      exclude_domains: EXCLUDED_DOMAINS,
     }),
     signal: AbortSignal.timeout(8000),
   });
   if (!res.ok) return null;
   const data = await res.json();
   const items = Array.isArray(data.results) ? data.results : [];
-  if (!items.length) return null;
+
+  const seen = new Set();
+  const sources = [];
+  for (const item of items) {
+    if (typeof item.score === "number" && item.score < 0.45) continue;
+    const url = cleanUrl(item.url || "#");
+    if (url !== "#" && seen.has(url)) continue;
+    seen.add(url);
+
+    let host = "Artikel terkait";
+    try {
+      host = new URL(url).hostname.replace(/^www\./, "");
+    } catch {}
+    const rawSnippet = String(item.content || "").replace(/\s+/g, " ").trim();
+    const snippet = rawSnippet.length > 180 ? `${rawSnippet.slice(0, 177)}...` : rawSnippet;
+    sources.push({
+      publisher: item.title || host,
+      date: host,
+      snippet,
+      url,
+    });
+    if (sources.length >= 4) break;
+  }
+
+  if (!sources.length) return null;
 
   // Hasil Tavily SELALU kuning varian "related" (liputan terkait, bukan putusan).
   return {
     status: "yellow",
     variant: "related",
-    sources: items.slice(0, 4).map((item) => {
-      let host = "Artikel terkait";
-      try {
-        host = new URL(item.url).hostname.replace(/^www\./, "");
-      } catch {}
-      const rawSnippet = String(item.content || "").replace(/\s+/g, " ").trim();
-      const snippet = rawSnippet.length > 180 ? `${rawSnippet.slice(0, 177)}...` : rawSnippet;
-      return {
-        publisher: item.title || host,
-        date: host,
-        snippet,
-        url: item.url || "#",
-      };
-    }),
+    sources,
     provider: "tavily",
   };
 }
@@ -208,13 +238,14 @@ async function analyzeWithGemini(claim, sources, apiKey) {
 
   const prompt = [
     "Kamu adalah asisten verifikasi fakta yang objektif dan ringkas (bahasa Indonesia).",
-    "Tugasmu menilai klaim berdasarkan bukti pencarian dan fakta umum yang mapan.",
+    "Tugasmu menilai klaim berdasarkan bukti pencarian dan fakta umum/ilmiah yang mapan.",
     "Aturan status:",
-    '- "red": jika klaim jelas salah, hoaks, mustahil, atau bertentangan langsung dengan fakta/bukti.',
-    '- "blue": jika bukti lintas media kredibel jelas mengonfirmasi inti klaim tersebut benar terjadi.',
-    '- "yellow": jika bukti belum cukup, klaim menyesatkan/hilang konteks, atau masih berupa rumor.',
+    '- "red": jika klaim jelas salah, hoaks, mustahil secara realita/ilmiah (misal manusia ke Mars saat ini, atau jabatan negara yang jelas keliru), atau bertentangan langsung dengan fakta/bukti.',
+    '- "blue": jika fakta mapan atau bukti lintas media kredibel jelas mengonfirmasi inti klaim tersebut benar.',
+    '- "yellow": HANYA jika klaim masih mungkin terjadi tapi bukti belum cukup, atau benar sebagian/menyesatkan/hilang konteks.',
+    '- "sourcesRelevant": true jika bukti pencarian di bawah benar-benar membahas topik klaim, false jika hasil pencarian melenceng/tidak nyambung.',
     "Balas HANYA JSON valid dengan format:",
-    '{"status":"red|yellow|blue","variant":"misleading|related|empty","summary":"Penjelasan objektif 2-3 kalimat. Jika relevan, bedakan fakta inti dan konteks penting."}',
+    '{"status":"red|yellow|blue","variant":"misleading|related|empty","sourcesRelevant":true,"summary":"Penjelasan objektif 2-3 kalimat. Jika relevan, bedakan fakta inti dan konteks penting."}',
     "",
     `Klaim: ${claim}`,
     "Bukti pencarian:",
@@ -234,25 +265,28 @@ async function analyzeWithGemini(claim, sources, apiKey) {
         signal: AbortSignal.timeout(10000),
       }
     );
-    if (!res.ok) return null;
+    if (!res.ok) return { _aiError: `http_${res.status}` };
     const data = await res.json();
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
     const parsed = JSON.parse(text);
-    if (!["red", "yellow", "blue"].includes(parsed.status) || !parsed.summary) return null;
+    if (!["red", "yellow", "blue"].includes(parsed.status) || !parsed.summary) {
+      return { _aiError: "invalid_json" };
+    }
+    const finalSources = parsed.sourcesRelevant === false ? [] : sources;
     const out = {
       status: parsed.status,
       summary: String(parsed.summary).trim(),
-      sources,
+      sources: finalSources,
       provider: "gemini+tavily",
     };
     if (out.status === "yellow") {
       out.variant = ["misleading", "related", "empty"].includes(parsed.variant)
         ? parsed.variant
-        : (sources.length ? "related" : "empty");
+        : (finalSources.length ? "related" : "empty");
     }
     return out;
   } catch {
-    return null;
+    return { _aiError: "timeout_or_network" };
   }
 }
 
@@ -337,9 +371,14 @@ export default async function handler(req, res) {
     }
 
     // 4. Analisis AI berbasis bukti (Gemini) jika belum ada putusan publisher resmi
+    let aiStatus = geminiKey ? "ok" : "missing_key";
     if ((!result || result.provider === "tavily") && geminiKey) {
       const aiResult = await analyzeWithGemini(claim, result?.sources || [], geminiKey);
-      if (aiResult) result = aiResult;
+      if (aiResult && !aiResult._aiError) {
+        result = aiResult;
+      } else {
+        aiStatus = aiResult?._aiError || "error";
+      }
     }
 
     // 5. Kalau semuanya kosong -> kuning varian "empty"
@@ -348,7 +387,7 @@ export default async function handler(req, res) {
     }
 
     setCache(key, result);
-    res.status(200).json({ ...result, scannedClaim: claim, cached: false });
+    res.status(200).json({ ...result, aiStatus, scannedClaim: claim, cached: false });
   } catch (err) {
     const code = err?.code || 502;
     res.status(code).json({
